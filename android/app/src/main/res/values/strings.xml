@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AutoPostToGroup</string>
+    <string name="facebook_app_id">542543251181488</string>
+    <string name="fb_login_protocol_scheme">fb542543251181488</string>
+    <string name="facebook_client_token">bd886ee9996f02849ebddcd76130d59a</string>
+</resources>
