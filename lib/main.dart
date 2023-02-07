@@ -35,12 +35,12 @@ class MyHomePage extends StatelessWidget {
           child: SizedBox(
             height: 40,
             child: SignInButton(
+              Buttons.FacebookNew,
               shape: ShapeBorder.lerp(
                   const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(15.0))),
                   const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(15.0))),
                   0.0),
               mini: false,
-              Buttons.FacebookNew,
               onPressed: () {
                 Navigator.push(context, MaterialPageRoute(builder: ((context) => const UserScreen())));
               },

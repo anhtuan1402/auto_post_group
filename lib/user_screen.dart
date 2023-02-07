@@ -4,6 +4,9 @@ import 'package:auto_post_group/Model/Group.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
 import 'package:http/http.dart' as http;
+import 'dart:convert' as JSON;
+
+import 'package:image_picker/image_picker.dart';
 
 class UserScreen extends StatefulWidget {
   const UserScreen({Key? key}) : super(key: key);
@@ -18,8 +21,12 @@ class _UserScreenState extends State<UserScreen> {
   String? _accessToken;
   bool? _checking = true;
   bool? is_tick = true;
+  Set<Group> list_tick = Set<Group>();
+  List<Group> list_group = [];
   late TextEditingController _noteController;
   TextEditingController delayController = TextEditingController();
+  ImagePicker picker = ImagePicker();
+  XFile? image;
 
   Future<String?> getAccessToken() async {
     final LoginResult loginResult = await FacebookAuth.instance
@@ -38,8 +45,8 @@ class _UserScreenState extends State<UserScreen> {
   }
 
   getGroups() async {
+    if (list_group.length != 0) return;
     final accessToken = _accessToken;
-    print("tokennnnnn ne: $accessToken");
     final response = await http.get(
       Uri.parse('https://graph.facebook.com/me/groups?access_token=$accessToken'),
     );
@@ -47,21 +54,42 @@ class _UserScreenState extends State<UserScreen> {
     if (response.statusCode == 200) {
       final data = json.decode(response.body)['data'] as List;
       final nextt = json.decode(response.body)['paging']['next'];
-      print("nextt ne $nextt");
-
-      setState(() {
-        _noteController = TextEditingController.fromValue(
-          TextEditingValue(
-            text: data.toString(),
-          ),
-        );
-      });
-
-      print("aaaaaaaaaaaaaaaaaaaaaaaaa $data");
-      return data.map((group) => Group.fromJson(group)).toList();
+      list_group = data.map((group) => Group.fromJson(group)).toList();
+      print("Size ==== ${list_group.length}");
+      if (nextt != null) {
+        add_next_group(nextt);
+      } else {
+        setState(() {
+          list_group = list_group;
+        });
+      }
     } else {
       print("response.statusCode ${response.body}");
-      return null;
+    }
+  }
+
+  add_next_group(String urlll) async {
+    final accessToken = _accessToken;
+
+    final response = await http.get(
+      Uri.parse(urlll),
+    );
+    print("response.statusCode ${response.statusCode}");
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body)['data'] as List;
+      final nextt = json.decode(response.body)['paging']['next'];
+      List<Group> list_group_temp = data.map((group) => Group.fromJson(group)).toList();
+      list_group.addAll(list_group_temp);
+      print("Size ==== ${list_group.length}");
+      if (nextt != null) {
+        add_next_group(nextt);
+      } else {
+        setState(() {
+          list_group = list_group;
+        });
+      }
+    } else {
+      print("response.statusCode ${response.body}");
     }
   }
 
@@ -87,6 +115,46 @@ class _UserScreenState extends State<UserScreen> {
     }
   }
 
+  _postToGroup(String id_group, String messages_post) async {
+    print(_accessToken);
+    final graphResponse = await http.post(
+      Uri.parse('https://graph.facebook.com/$id_group/feed'),
+      headers: {
+        'Authorization': 'Bearer $_accessToken',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.jsonEncode({'message': messages_post}),
+    );
+    print(graphResponse.body);
+  }
+
+  Future<void> postImageToGroup(String imagePath, String group_id) async {
+    var graphResponse = await http.post(Uri.parse('https://graph.facebook.com/$group_id/photos'), headers: {
+      "Content-Type": "multipart/form-data",
+      "Authorization": "Bearer $_accessToken"
+    }, body: {
+      "url": imagePath,
+      "published": "false",
+    });
+    print("graphResponse.statusCode ${graphResponse.statusCode}");
+    if (graphResponse.statusCode != 200) {
+      throw Exception('Failed to upload image');
+    }
+
+    var postResponse = await http.post(Uri.parse('https://graph.facebook.com/$group_id/photos'), headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Authorization": "Bearer $_accessToken"
+    }, body: {
+      "url": imagePath,
+      "published": "true",
+    });
+    print("postResponse.statusCode ${postResponse.statusCode}");
+
+    if (postResponse.statusCode != 200) {
+      throw Exception('Failed to post to group');
+    }
+  }
+
   _login() async {
     final LoginResult loginResult = await FacebookAuth.instance
         .login(permissions: ['email', 'public_profile'], loginBehavior: LoginBehavior.dialogOnly);
@@ -96,6 +164,11 @@ class _UserScreenState extends State<UserScreen> {
       final userInfo = await FacebookAuth.instance.getUserData();
 
       setState(() {
+        _noteController = TextEditingController.fromValue(
+          TextEditingValue(
+            text: _accessToken!,
+          ),
+        );
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text("Login succes"),
         ));
@@ -115,6 +188,7 @@ class _UserScreenState extends State<UserScreen> {
   @override
   void initState() {
     super.initState();
+    list_group.clear();
     _noteController = TextEditingController.fromValue(
       const TextEditingValue(
         text: "",
@@ -153,7 +227,7 @@ class _UserScreenState extends State<UserScreen> {
                         height: 50,
                       ),
                       const Text("List group"),
-                      ListViewGroup(ll),
+                      ListViewGroup(),
                       const SizedBox(
                         height: 50,
                       ),
@@ -172,12 +246,12 @@ class _UserScreenState extends State<UserScreen> {
                             height: 250,
                             width: 170,
                             child: Column(
-                              children: [
-                                const Text("Process"),
-                                const SizedBox(
+                              children: const [
+                                Text("Process"),
+                                SizedBox(
                                   height: 10,
                                 ),
-                                List_Group_Process(ll)
+                                //List_Group_Process(ll)
                               ],
                             ),
                           )
@@ -186,7 +260,15 @@ class _UserScreenState extends State<UserScreen> {
                       const SizedBox(
                         height: 20,
                       ),
-                      ButtonPost()
+                      ButtonPost(),
+                      ElevatedButton(
+                          onPressed: () async {
+                            image = await picker.pickImage(source: ImageSource.gallery);
+                            setState(() {
+                              //update UI
+                            });
+                          },
+                          child: Text("Pick Image")),
                     ],
                   ),
                 )),
@@ -216,7 +298,10 @@ class _UserScreenState extends State<UserScreen> {
         ),
         ElevatedButton(
             onPressed: () {
-              getGroups();
+              for (var zz in list_tick) {
+                //_postToGroup(zz.id, "test post");
+                postImageToGroup(image!.path.toString(), zz.id);
+              }
             },
             child: const Text('Get')),
       ],
@@ -238,22 +323,22 @@ class _UserScreenState extends State<UserScreen> {
     );
   }
 
-  Widget ListViewGroup(List<String> ll) {
+  Widget ListViewGroup() {
     return Container(
       margin: const EdgeInsets.only(top: 15.0, left: 50.0, right: 50.0),
       padding: const EdgeInsets.all(3.0),
       decoration: BoxDecoration(border: Border.all(width: 2, color: Colors.black)),
       height: 200,
       child: FutureBuilder(
-          future: getListGroup(),
-          builder: (context, AsyncSnapshot snapshot) {
-            if (ll.isEmpty) {
+          future: getGroups(),
+          builder: (context, AsyncSnapshot<dynamic> snapshot) {
+            if (list_group.length == 0) {
               return const Center(child: CircularProgressIndicator());
             } else {
               return ListView.builder(
-                itemCount: ll.length,
+                itemCount: list_group.length,
                 itemBuilder: (context, index) {
-                  return ItemListView(ll, index);
+                  return ItemListView(list_group[index], index);
                 },
               );
             }
@@ -261,17 +346,22 @@ class _UserScreenState extends State<UserScreen> {
     );
   }
 
-  Widget ItemListView(List<String> ll, int position) {
+  Widget ItemListView(Group ll, int position) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Container(width: 100, child: Text(ll[position])),
+        Container(width: 100, child: Text(ll.name)),
         Checkbox(
-          value: is_tick,
+          value: ll.is_check,
           onChanged: (value) {
             setState(() {
-              is_tick = !is_tick!;
+              ll.is_check = !ll.is_check;
+              if (ll.is_check == true)
+                list_tick.add(ll);
+              else
+                list_tick.remove(ll);
+              print(list_tick.length);
             });
           },
         )
@@ -279,14 +369,14 @@ class _UserScreenState extends State<UserScreen> {
     );
   }
 
-  Widget ItemListView_Process(List<String> ll, int position) {
+  Widget ItemListView_Process(Group ll) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Container(
             width: 100,
             child: Text(
-              ll[position],
+              ll.name,
               maxLines: 1,
               style: TextStyle(),
             )),
@@ -300,15 +390,15 @@ class _UserScreenState extends State<UserScreen> {
       decoration: BoxDecoration(border: Border.all(width: 2, color: Colors.black)),
       height: 200,
       child: FutureBuilder(
-          future: getListGroup(),
-          builder: (context, AsyncSnapshot snapshot) {
-            if (ll.isEmpty) {
+          future: getGroups(),
+          builder: (context, AsyncSnapshot<dynamic> snapshot) {
+            if (snapshot == null) {
               return const Center(child: CircularProgressIndicator());
             } else {
               return ListView.builder(
-                itemCount: ll.length,
+                itemCount: snapshot.data!.length,
                 itemBuilder: (context, index) {
-                  return ItemListView_Process(ll, index);
+                  return ItemListView_Process(snapshot.data![index]);
                 },
               );
             }

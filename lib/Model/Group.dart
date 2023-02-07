@@ -1,6 +1,7 @@
 class Group {
   final String id;
   final String name;
+  bool is_check = false;
 
   Group({required this.id, required this.name});
 
