@@ -1,10 +1,12 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:auto_post_group/Model/Group.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert' as JSON;
+import 'package:http_parser/http_parser.dart';
 
 import 'package:image_picker/image_picker.dart';
 
@@ -16,7 +18,7 @@ class UserScreen extends StatefulWidget {
 }
 
 class _UserScreenState extends State<UserScreen> {
-  String _message = 'Not logged in yet';
+  String str_process = '';
   Map<String, dynamic>? _userData;
   String? _accessToken;
   bool? _checking = true;
@@ -94,24 +96,31 @@ class _UserScreenState extends State<UserScreen> {
   }
 
   _ifUserIsLoggedIn() async {
-    String? accessToken = await getAccessToken();
-
-    setState(() {
-      _checking = false;
-    });
-
-    if (accessToken != null) {
-      final userData = await FacebookAuth.instance.getUserData();
-      _accessToken = accessToken;
+    try {
+      if (_checking == false) return;
+      String? accessToken = await getAccessToken();
 
       setState(() {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text("Login succes"),
-        ));
-        _userData = userData;
+        _checking = false;
       });
-    } else {
-      _login();
+
+      if (accessToken != null) {
+        final userData = await FacebookAuth.instance.getUserData();
+        _accessToken = accessToken;
+
+        setState(() {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text("Login succes"),
+          ));
+          _userData = userData;
+        });
+      } else {
+        _login();
+      }
+    } catch (e) {
+      setState(() {
+        _checking = false;
+      });
     }
   }
 
@@ -128,59 +137,77 @@ class _UserScreenState extends State<UserScreen> {
     print(graphResponse.body);
   }
 
-  Future<void> postImageToGroup(String imagePath, String group_id) async {
-    var graphResponse = await http.post(Uri.parse('https://graph.facebook.com/$group_id/photos'), headers: {
-      "Content-Type": "multipart/form-data",
-      "Authorization": "Bearer $_accessToken"
-    }, body: {
-      "url": imagePath,
-      "published": "false",
-    });
-    print("graphResponse.statusCode ${graphResponse.statusCode}");
-    if (graphResponse.statusCode != 200) {
-      throw Exception('Failed to upload image');
-    }
+  Future<void> _postToFacebook(String _imagePath, String group_id, String _message) async {
+    final image = await http.MultipartFile.fromPath(
+      'source',
+      _imagePath,
+      contentType: MediaType.parse('image/jpeg'),
+    );
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('https://graph.facebook.com/$group_id/photos'),
+    );
+    request.fields['message'] = _message;
+    request.files.add(image);
+    request.headers.addAll({'Authorization': 'Bearer $_accessToken'});
 
-    var postResponse = await http.post(Uri.parse('https://graph.facebook.com/$group_id/photos'), headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "Authorization": "Bearer $_accessToken"
-    }, body: {
-      "url": imagePath,
-      "published": "true",
-    });
-    print("postResponse.statusCode ${postResponse.statusCode}");
+    final response = await request.send();
+    final responseData = await response.stream.bytesToString();
 
-    if (postResponse.statusCode != 200) {
-      throw Exception('Failed to post to group');
+    if (response.statusCode == 200) {
+      final result = jsonDecode(responseData);
+      print(result);
+      // Post was successful
+    } else {
+      print(responseData);
+      // Post was unsuccessful
     }
   }
 
   _login() async {
-    final LoginResult loginResult = await FacebookAuth.instance
-        .login(permissions: ['email', 'public_profile'], loginBehavior: LoginBehavior.dialogOnly);
-
-    if (loginResult.status == LoginStatus.success) {
-      _accessToken = loginResult.accessToken!.token;
-      final userInfo = await FacebookAuth.instance.getUserData();
-
+    try {
+      if (_checking == false) return;
+      final LoginResult loginResult = await FacebookAuth.instance
+          .login(permissions: ['email', 'public_profile'], loginBehavior: LoginBehavior.dialogOnly);
       setState(() {
-        _noteController = TextEditingController.fromValue(
-          TextEditingValue(
-            text: _accessToken!,
-          ),
-        );
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text("Login succes"),
-        ));
-        _userData = userInfo;
+        _checking = false;
       });
-    } else {}
+
+      if (loginResult.status == LoginStatus.success) {
+        _accessToken = loginResult.accessToken!.token;
+        final userInfo = await FacebookAuth.instance.getUserData();
+
+        setState(() {
+          _noteController = TextEditingController.fromValue(
+            TextEditingValue(
+              text: _accessToken!,
+            ),
+          );
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text("Login succes"),
+          ));
+          _userData = userInfo;
+        });
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(loginResult.message.toString()),
+        ));
+        return;
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString())),
+      );
+    }
   }
 
   _logOut() async {
     await FacebookAuth.instance.logOut();
     _accessToken = null;
     _userData = null;
+    setState(() {
+      _checking = true;
+    });
   }
 
   _checktrail() async {}
@@ -188,6 +215,7 @@ class _UserScreenState extends State<UserScreen> {
   @override
   void initState() {
     super.initState();
+    str_process = '';
     list_group.clear();
     _noteController = TextEditingController.fromValue(
       const TextEditingValue(
@@ -215,63 +243,79 @@ class _UserScreenState extends State<UserScreen> {
       child: Scaffold(
           body: _checking!
               ? const Center(
-                  child: CircularProgressIndicator(),
-                )
+            child: CircularProgressIndicator(),
+          )
               : SingleChildScrollView(
-                  padding: const EdgeInsets.only(left: 10, right: 10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      DisplayInfor(context),
-                      const SizedBox(
-                        height: 50,
-                      ),
-                      const Text("List group"),
-                      ListViewGroup(),
-                      const SizedBox(
-                        height: 50,
-                      ),
-                      Row(
+            padding: const EdgeInsets.only(left: 10, right: 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                DisplayInfor(context),
+                const SizedBox(
+                  height: 50,
+                ),
+                const Text("List group"),
+                ListViewGroup(),
+                const SizedBox(
+                  height: 50,
+                ),
+                Row(
+                  children: [
+                    Container(
+                        height: 250,
+                        width: MediaQuery.of(context).size.width / 2,
+                        child: Column(
+                          children: [
+                            const Text("Message"),
+                            inputText(),
+                          ],
+                        )),
+                    Container(
+                      height: 250,
+                      width: 170,
+                      child: Column(
                         children: [
-                          Container(
-                              height: 250,
-                              width: MediaQuery.of(context).size.width / 2,
-                              child: Column(
-                                children: [
-                                  const Text("Message"),
-                                  inputText(),
-                                ],
-                              )),
-                          Container(
-                            height: 250,
-                            width: 170,
-                            child: Column(
-                              children: const [
-                                Text("Process"),
-                                SizedBox(
-                                  height: 10,
-                                ),
-                                //List_Group_Process(ll)
-                              ],
-                            ),
-                          )
+                          Text("Process"),
+                          SizedBox(
+                            height: 10,
+                          ),
+                          Text(str_process)
                         ],
                       ),
-                      const SizedBox(
-                        height: 20,
-                      ),
-                      ButtonPost(),
-                      ElevatedButton(
-                          onPressed: () async {
-                            image = await picker.pickImage(source: ImageSource.gallery);
-                            setState(() {
-                              //update UI
-                            });
-                          },
-                          child: Text("Pick Image")),
-                    ],
-                  ),
-                )),
+                    )
+                  ],
+                ),
+                const SizedBox(
+                  height: 20,
+                ),
+                ButtonPost(),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    ElevatedButton(
+                        onPressed: () async {
+                          image = await picker.pickImage(source: ImageSource.gallery);
+                          setState(() {});
+                        },
+                        child: Text("Pick Image")),
+                    ElevatedButton(
+                        onPressed: () {
+                          setState(() {
+                            image = null;
+                          });
+                        },
+                        child: Text("Clear image")),
+                  ],
+                ),
+                image != null
+                    ? Container(
+                    height: MediaQuery.of(context).size.height / 2,
+                    width: MediaQuery.of(context).size.width / 2,
+                    child: Image.file(File(image!.path)))
+                    : Text('')
+              ],
+            ),
+          )),
     );
   }
 
@@ -298,9 +342,19 @@ class _UserScreenState extends State<UserScreen> {
         ),
         ElevatedButton(
             onPressed: () {
+              int dem = 1;
               for (var zz in list_tick) {
-                //_postToGroup(zz.id, "test post");
-                postImageToGroup(image!.path.toString(), zz.id);
+                Future.delayed(const Duration(milliseconds: 1000), () {
+                  setState(() {
+                    str_process = '$dem / ${list_tick.length}';
+                  });
+                  if (image != null) {
+                    _postToFacebook(image!.path.toString(), zz.id, _noteController.text);
+                  } else {
+                    _postToGroup(zz.id, _noteController.text);
+                  }
+                  dem++;
+                });
               }
             },
             child: const Text('Get')),
@@ -413,22 +467,22 @@ class _UserScreenState extends State<UserScreen> {
         children: [
           _userData != null
               ? Container(
-                  child: CircleAvatar(
-                    radius: 20.0,
-                    backgroundImage: NetworkImage(_userData!['picture']['data']['url']),
-                    backgroundColor: Colors.white,
-                  ),
-                  // child: Image.network(_userData!['picture']['data']['url'], height: 40),
-                )
+            child: CircleAvatar(
+              radius: 20.0,
+              backgroundImage: NetworkImage(_userData!['picture']['data']['url']),
+              backgroundColor: Colors.white,
+            ),
+            // child: Image.network(_userData!['picture']['data']['url'], height: 40),
+          )
               : Container(),
           const SizedBox(
             width: 20,
           ),
           _userData != null
               ? Text(
-                  '${_userData!['name']}',
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
-                )
+            '${_userData!['name']}',
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
+          )
               : Container(),
           const SizedBox(
             width: 20,
